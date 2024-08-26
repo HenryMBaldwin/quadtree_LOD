@@ -32,15 +32,10 @@ fn setup(
     });
 
     // Light
-    commands.spawn(PointLightBundle {
-        point_light: PointLight {
-            intensity: 4000.0,
-            shadows_enabled: true,
-            ..Default::default()
-        },
-        transform: Transform::from_xyz(4.0, 8.0, 4.0),
-        ..Default::default()
-    });
+    commands.spawn(DirectionalLightBundle {
+        transform: Transform::from_xyz(-0.5, 0.5, -2.5).looking_at(Vec3::ZERO, Vec3::Y),
+        ..default()
+    });    
 
     // Set the number of subdivisions
     let subdivisions = 1;
