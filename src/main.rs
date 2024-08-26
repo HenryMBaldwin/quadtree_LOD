@@ -4,19 +4,35 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::wireframe::{Wireframe, WireframePlugin};
 use bevy::render::render_asset::RenderAssetUsages;
-
+use bevy::scene::ron::de;
 
 #[derive(Component)]
 struct Rotateable {
     speed: f32,
 }
 
+#[derive(Component)]
+struct SubdivisionInput;
+
+#[derive(Component)]
+struct SubdivisionIncrement;
+
+#[derive(Component)]
+struct SubdivisionDecrement;
+
+#[derive(Resource)]
+struct Subdivisions {
+    value: usize,
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(WireframePlugin)
+        .insert_resource(Subdivisions { value: 1 })
         .add_systems(Startup, setup)
         .add_systems(Update, rotate_shape)
+        .add_systems(Update, handle_ui_interactions)
         .run();
 }
 
@@ -24,6 +40,8 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
+    subdivisions: Res<Subdivisions>,
 ) {
     // Camera
     commands.spawn(Camera3dBundle {
@@ -36,12 +54,98 @@ fn setup(
         transform: Transform::from_xyz(-0.5, 0.5, -2.5).looking_at(Vec3::ZERO, Vec3::Y),
         ..default()
     });    
+    
+    // UI setup
+    commands.spawn(NodeBundle {
+        style: Style {
+            width: Val::Percent(30.0),
+            height: Val::Percent(100.0),
+            position_type: PositionType::Absolute,
+            right: Val::Px(0.0),
+            top: Val::Auto, // or default for top positioning
+            bottom: Val::Auto, // or default for bottom positioning
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            flex_direction: FlexDirection::ColumnReverse,
+            ..default()
+        },
+        background_color: BackgroundColor(Color::NONE),
+        ..default()
+    })
+    .with_children(|parent| {
+        //text
+        parent.spawn((
+            TextBundle {
+                text: Text::from_section(
+                    "Subdivisions: 1",
+                    TextStyle {
+                        font: asset_server.load("fonts/FiraSans-Bold.ttf"),
+                        font_size: 40.0,
+                        color: Color::WHITE,
+                    },
+                ),
+                ..default()
+            },
+            SubdivisionInput,
+        ));
 
-    // Set the number of subdivisions
-    let subdivisions = 1;
+        //increment button
+        parent.spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Px(40.0),
+                    height: Val::Px(40.0),
+                    margin: UiRect::all(Val::Px(5.0)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgb(0.5, 0.5, 0.5)),
+                ..default()
+            },
+            SubdivisionIncrement,
+        ))
+        .with_children(|parent| {
+            parent.spawn(TextBundle::from_section(
+                "+",
+                TextStyle {
+                    font: asset_server.load("fonts/FiraSans-Bold.ttf"),
+                    font_size: 40.0,
+                    color: Color::WHITE,
+                }
+            ));
+        });
+
+        //decrement button
+        parent.spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Px(40.0),
+                    height: Val::Px(40.0),
+                    margin: UiRect::all(Val::Px(5.0)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgb(0.5, 0.5, 0.5)),
+                ..default()
+            },
+            SubdivisionDecrement,
+        ))
+        .with_children(|parent| {
+            parent.spawn(TextBundle::from_section(
+                "-",
+                TextStyle {
+                    font: asset_server.load("fonts/FiraSans-Bold.ttf"),
+                    font_size: 40.0,
+                    color: Color::WHITE,
+                }
+            ));
+        });
+    });
 
     // Create the octahedron mesh and subdivide it
-    let mesh = generate_geodesic_sphere(subdivisions);
+    let mesh = generate_geodesic_sphere(1);
 
     // Spawn the mesh with a material and the wireframe component
     commands.spawn((
@@ -57,6 +161,43 @@ fn setup(
         Wireframe,
         Rotateable {speed: 0.3}, // Add the Wireframe component
 ));
+}
+
+
+fn handle_ui_interactions(
+    mut interaction_query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, Or<(With<SubdivisionIncrement>, With<SubdivisionDecrement>)>),
+    >,
+    mut subdivision_input: Query<&mut Text, With<SubdivisionInput>>,
+    mut subdivisions: ResMut<Subdivisions>,
+) {
+    for (interaction, mut background_color) in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                println!("Pressed!");
+                // Update subdivisions
+                if background_color.0 == Color::srgb(0.5, 0.5, 0.5) {
+                    if let Ok(mut text) = subdivision_input.get_single_mut() {
+                        if let Ok(subdiv_value) = text.sections[0]
+                            .value
+                            .split(':')
+                            .nth(1)
+                            .unwrap()
+                            .trim()
+                            .parse::<usize>()
+                        {
+                            subdivisions.value = subdiv_value;
+                            text.sections[0].value = format!("Subdivisions: {}", subdiv_value);
+                        }
+                    }
+                }
+            }
+            _ => {
+                *background_color = BackgroundColor(Color::srgb(0.5, 0.5, 0.5));
+            }
+        }
+    }
 }
 
 // Function to create an octahedron and subdivide it
