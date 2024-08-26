@@ -1,5 +1,6 @@
 use std::f32::consts::TAU;
 
+
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::wireframe::{Wireframe, WireframePlugin};
@@ -19,6 +20,9 @@ struct SubdivisionIncrement;
 
 #[derive(Component)]
 struct SubdivisionDecrement;
+
+#[derive(Component)]
+struct Sphere;
 
 #[derive(Resource)]
 struct Subdivisions {
@@ -55,6 +59,9 @@ fn setup(
         ..default()
     });    
     
+    //spawn initial sphere
+    create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, subdivisions.value);
+
     // UI setup
     commands.spawn(NodeBundle {
         style: Style {
@@ -145,9 +152,76 @@ fn setup(
     });
 
     // Create the octahedron mesh and subdivide it
-    let mesh = generate_geodesic_sphere(1);
+//     let mesh = generate_geodesic_sphere(0);
 
-    // Spawn the mesh with a material and the wireframe component
+//     // Spawn the mesh with a material and the wireframe component
+//     commands.spawn((
+//         PbrBundle {
+//             mesh: meshes.add(mesh),
+//             material: materials.add(StandardMaterial {
+//                 base_color: Color::srgb(1.0, 1.0, 1.0),
+//                 ..Default::default()
+//             }),
+//             transform: Transform::from_scale(Vec3::splat(0.5)), // Scale down
+//             ..Default::default()
+//         }, 
+//         Wireframe,
+//         Rotateable {speed: 0.3}, // Add the Wireframe component
+// ));
+}
+
+
+fn handle_ui_interactions(
+    mut interaction_query: Query<
+        (&Interaction, &mut BackgroundColor, Option<&SubdivisionIncrement>, Option<&SubdivisionDecrement>),
+        Changed<Interaction>,
+    >,
+    mut subdivisions: ResMut<Subdivisions>,
+    mut text_query: Query<&mut Text, With<SubdivisionInput>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    sphere_query: Query<Entity, With<Sphere>>,
+) {
+    for (interaction, mut background_color, increment, decrement) in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                // Check if this is an increment or decrement button
+                if increment.is_some() {
+                    if subdivisions.value < 8 {
+                        subdivisions.value += 1;
+                    }
+                } else if decrement.is_some() {
+                    if subdivisions.value > 0 {
+                        subdivisions.value -= 1;
+                    }
+                }
+
+                // Update the displayed text
+                if let Ok(mut text) = text_query.get_single_mut() {
+                    text.sections[0].value = format!("Subdivisions: {}", subdivisions.value);
+                }
+
+                // Remove the old sphere
+                for entity in sphere_query.iter() {
+                    commands.entity(entity).despawn_recursive();
+                }
+
+                // Recreate the geodesic sphere with the new subdivisions
+                create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, subdivisions.value);
+
+                *background_color = BackgroundColor(Color::srgb(0.5, 0.5, 0.5));
+            }
+            _ => {
+                *background_color = BackgroundColor(Color::srgb(0.5, 0.5, 0.5));
+            }
+        }
+    }
+}
+
+fn create_geodesic_sphere(commands: &mut Commands, meshes: &mut ResMut<Assets<Mesh>>, materials: &mut ResMut<Assets<StandardMaterial>>, subdivisions: usize){
+    let mesh = generate_geodesic_sphere(subdivisions);
+
     commands.spawn((
         PbrBundle {
             mesh: meshes.add(mesh),
@@ -159,47 +233,10 @@ fn setup(
             ..Default::default()
         }, 
         Wireframe,
-        Rotateable {speed: 0.3}, // Add the Wireframe component
-));
+        Rotateable {speed: 0.3},
+        Sphere,
+    ));
 }
-
-
-fn handle_ui_interactions(
-    mut interaction_query: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, Or<(With<SubdivisionIncrement>, With<SubdivisionDecrement>)>),
-    >,
-    mut subdivision_input: Query<&mut Text, With<SubdivisionInput>>,
-    mut subdivisions: ResMut<Subdivisions>,
-) {
-    for (interaction, mut background_color) in &mut interaction_query {
-        match *interaction {
-            Interaction::Pressed => {
-                println!("Pressed!");
-                // Update subdivisions
-                if background_color.0 == Color::srgb(0.5, 0.5, 0.5) {
-                    if let Ok(mut text) = subdivision_input.get_single_mut() {
-                        if let Ok(subdiv_value) = text.sections[0]
-                            .value
-                            .split(':')
-                            .nth(1)
-                            .unwrap()
-                            .trim()
-                            .parse::<usize>()
-                        {
-                            subdivisions.value = subdiv_value;
-                            text.sections[0].value = format!("Subdivisions: {}", subdiv_value);
-                        }
-                    }
-                }
-            }
-            _ => {
-                *background_color = BackgroundColor(Color::srgb(0.5, 0.5, 0.5));
-            }
-        }
-    }
-}
-
 // Function to create an octahedron and subdivide it
 fn generate_geodesic_sphere(subdivisions: usize) -> Mesh {
     let mut vertices = vec![
