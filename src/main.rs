@@ -120,6 +120,10 @@ fn setup(
                             font_size: 15.0,
                             color: Color::WHITE,
                         }),
+                    style: Style {
+                       right: Val::Px(5.0),
+                       ..Default::default()
+                    },
                     ..default()
                 },
                 SubdivisionInput,
@@ -131,7 +135,7 @@ fn setup(
                     style: Style {
                         width: Val::Px(15.0),
                         height: Val::Px(15.0),
-                        margin: UiRect::all(Val::Px(5.0)),
+                        margin: UiRect::all(Val::Px(1.0)),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         ..default()
@@ -158,7 +162,7 @@ fn setup(
                     style: Style {
                         width: Val::Px(15.0),
                         height: Val::Px(15.0),
-                        margin: UiRect::all(Val::Px(5.0)),
+                        margin: UiRect::all(Val::Px(1.0)),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         ..default()
@@ -199,7 +203,7 @@ fn handle_ui_interactions(
             Interaction::Pressed => {
                 // Check if this is an increment or decrement button
                 if increment.is_some() {
-                    if subdivisions.value < 10 {
+                    if subdivisions.value < 15 {
                         subdivisions.value += 1;
                     }
                 } else if decrement.is_some() {
@@ -248,13 +252,13 @@ fn create_geodesic_sphere(commands: &mut Commands, meshes: &mut ResMut<Assets<Me
             ..Default::default()
         }, 
         Wireframe,
-        Rotateable {speed: 0.3},
+        Rotateable {speed: 0.05},
         Sphere,
     ));
 }
 
 fn rotate_shape(mut shapes: Query<(&mut Transform, &Rotateable)>, timer: Res<Time>) {
     for (mut transform, shape) in &mut shapes {
-        transform.rotate_y(-shape.speed * TAU * timer.delta_seconds());
+        transform.rotate_y(shape.speed * TAU * timer.delta_seconds());
     }
 }
