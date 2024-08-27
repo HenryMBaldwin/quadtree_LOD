@@ -1,9 +1,10 @@
 use std::f32::consts::TAU;
 
 
-use bevy::input::mouse::{MouseButtonInput, MouseMotion};
+use bevy::input::mouse::{self, MouseButtonInput, MouseMotion, MouseWheel};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
+use bevy::render::camera;
 use bevy::render::mesh::{self, Indices, PrimitiveTopology, SphereKind, SphereMeshBuilder};
 use bevy::pbr::wireframe::{Wireframe, WireframePlugin};
 use bevy::render::render_asset::RenderAssetUsages;
@@ -26,6 +27,9 @@ struct SubdivisionDecrement;
 
 #[derive(Component)]
 struct Sphere;
+
+#[derive(Component)]
+struct Camera;
 
 #[derive(Resource)]
 struct Subdivisions {
@@ -63,7 +67,8 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(Update, rotate_shape)
         .add_systems(Update, handle_ui_interactions)
-        .add_systems(Update, mouse_input_system)
+        .add_systems(Update, handle_mouse_rotate)
+        .add_systems(Update, handle_mouse_scroll)
         .add_systems(Update, track_sphere_state)
         .run();
 }
@@ -78,10 +83,13 @@ fn setup(
     sphere_state: Res<SphereState>
 ) {
     // Camera
-    commands.spawn(Camera3dBundle {
-        transform: Transform::from_xyz(0.0, 0.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
-        ..Default::default()
-    });
+    commands.spawn((
+        Camera3dBundle {
+            transform: Transform::from_xyz(0.0, 0.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
+            ..Default::default()
+        },
+        Camera,
+    ));
  
 
     ambient_light.brightness = 1000.0;
@@ -265,7 +273,7 @@ fn handle_ui_interactions(
     }
 }
 
-fn mouse_input_system(
+fn handle_mouse_rotate(
     mut mouse_state: ResMut<MouseState>,
     mut mousebtn_evr: EventReader<MouseButtonInput>,
     mut mousemov_evr: EventReader<MouseMotion>,
@@ -300,8 +308,20 @@ fn mouse_input_system(
             }
         }
     }
+
 }
  
+ fn handle_mouse_scroll(
+    mut mousescroll_evr: EventReader<MouseWheel>,
+    mut camera_query: Query<(&mut Transform, &Camera)>,
+ ) {
+    for event in mousescroll_evr.read() {
+        let MouseWheel { unit: _, y, x: _, window: _ } = event;
+        for (mut transform, _) in &mut camera_query {
+            transform.translation.z -= y * 0.1;
+        }
+    }
+ }
  //tracks state of the sphere
  fn track_sphere_state(
     mut sphere_state: ResMut<SphereState>,
