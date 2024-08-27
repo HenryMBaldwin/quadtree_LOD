@@ -10,6 +10,8 @@ use bevy::pbr::wireframe::{Wireframe, WireframePlugin};
 use bevy::render::render_asset::RenderAssetUsages;
 
 
+#[derive(Component)]
+struct Character;
 
 #[derive(Component)]
 struct Rotateable {
@@ -41,6 +43,10 @@ struct MouseState {
     dragging: bool,
 }
 
+#[derive(Resource)]
+struct CharacterState {
+    speed: f32,
+}
 //global state of sphere, so modification of the number of subdivisions can be done without losing the current state of the sphere
 #[derive(Resource, Clone)]
 struct SphereState {
@@ -91,8 +97,23 @@ fn setup(
         Camera,
     ));
  
+    //character (cube for now)
+    commands.spawn((
+        PbrBundle {
+            mesh: meshes.add(Cuboid::new(0.05, 0.05, 0.05)),
+            material: materials.add(StandardMaterial {
+                base_color: Color::srgb(0.0, 0.8, 0.2),
+                ..Default::default()
+            }),
+            transform: Transform::from_xyz(0.0, 0.0, 0.5),
+            ..Default::default()
+        },
+        Character,
+    ));
 
+    //light
     ambient_light.brightness = 1000.0;
+
     //spawn initial sphere
     create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
 
@@ -323,7 +344,7 @@ fn handle_mouse_rotate(
     }
  }
  //tracks state of the sphere
- fn track_sphere_state(
+ fn track_sphere_state( 
     mut sphere_state: ResMut<SphereState>,
     sphere_query: Query<(&Transform, &Sphere)>,
 ) {
