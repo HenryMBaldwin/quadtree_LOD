@@ -35,7 +35,16 @@ struct Subdivisions {
 #[derive(Resource)]
 struct MouseState {
     dragging: bool,
-    last_position: Vec2,
+}
+
+//global state of sphere, so modification of the number of subdivisions can be done without losing the current state of the sphere
+#[derive(Resource, Clone)]
+struct SphereState {
+    wireframe: bool,
+    //if constant rotation is enabled
+    rotating: bool,
+    //curreent transform of the sphere
+    transform: Transform,
 }
 
 fn main() {
@@ -44,13 +53,18 @@ fn main() {
         .add_plugins(WireframePlugin)
         .insert_resource(Subdivisions { value: 0 })
         .insert_resource(MouseState {
-            dragging: false,
-            last_position: Vec2::ZERO,
+            dragging: false
+        })
+        .insert_resource(SphereState {
+            wireframe: false,
+            rotating: false,
+            transform: Transform::from_xyz(0.0, 0.0, 0.0),
         })
         .add_systems(Startup, setup)
         .add_systems(Update, rotate_shape)
         .add_systems(Update, handle_ui_interactions)
         .add_systems(Update, mouse_input_system)
+        .add_systems(Update, track_sphere_state)
         .run();
 }
 
@@ -61,6 +75,7 @@ fn setup(
     asset_server: Res<AssetServer>,
     subdivisions: Res<Subdivisions>,
     mut ambient_light: ResMut<AmbientLight>,
+    sphere_state: Res<SphereState>
 ) {
     // Camera
     commands.spawn(Camera3dBundle {
@@ -71,7 +86,7 @@ fn setup(
 
     ambient_light.brightness = 1000.0;
     //spawn initial sphere
-    create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, subdivisions.value);
+    create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
 
     // UI setup
     commands.spawn(NodeBundle {
@@ -212,6 +227,7 @@ fn handle_ui_interactions(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     sphere_query: Query<Entity, With<Sphere>>,
+    sphere_state: Res<SphereState>
 ) {
     for (interaction, mut background_color, increment, decrement) in &mut interaction_query {
         match *interaction {
@@ -238,7 +254,7 @@ fn handle_ui_interactions(
                 }
 
                 // Recreate the geodesic sphere with the new subdivisions
-                create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, subdivisions.value);
+                create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
 
                 *background_color = BackgroundColor(Color::srgb(0.5, 0.5, 0.5));
             }
@@ -279,14 +295,25 @@ fn mouse_input_system(
         
         if mouse_state.dragging {
             for (mut transform, _) in &mut sphere_query {
-                transform.rotate_x(-delta.y * 0.01);
-                transform.rotate_y(-delta.x * 0.01);
+                transform.rotate_x(delta.y * 0.01);
+                transform.rotate_y(delta.x * 0.01);
             }
         }
     }
 }
  
-fn create_geodesic_sphere(commands: &mut Commands, meshes: &mut ResMut<Assets<Mesh>>, materials: &mut ResMut<Assets<StandardMaterial>>, subdivisions: usize){
+ //tracks state of the sphere
+ fn track_sphere_state(
+    mut sphere_state: ResMut<SphereState>,
+    sphere_query: Query<(&Transform, &Sphere)>,
+) {
+
+    for (transform, _) in &mut sphere_query.iter() {
+        sphere_state.transform = *transform;
+    }
+}
+
+fn create_geodesic_sphere(commands: &mut Commands, meshes: &mut ResMut<Assets<Mesh>>, materials: &mut ResMut<Assets<StandardMaterial>>, sphere_state: SphereState,  subdivisions: usize){
 
     let kind: SphereKind = mesh::SphereKind::Ico {
         subdivisions: subdivisions,
@@ -301,6 +328,7 @@ fn create_geodesic_sphere(commands: &mut Commands, meshes: &mut ResMut<Assets<Me
                 base_color: Color::srgb(1.0, 1.0, 1.0),
                 ..Default::default()
             }), 
+            transform: sphere_state.transform, 
             ..Default::default()
         }, 
         Wireframe,
