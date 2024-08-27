@@ -1,10 +1,14 @@
 use std::f32::consts::TAU;
 
 
+use bevy::input::mouse::{MouseButtonInput, MouseMotion};
+use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::render::mesh::{self, Indices, PrimitiveTopology, SphereKind, SphereMeshBuilder};
 use bevy::pbr::wireframe::{Wireframe, WireframePlugin};
 use bevy::render::render_asset::RenderAssetUsages;
+
+
 
 #[derive(Component)]
 struct Rotateable {
@@ -28,14 +32,25 @@ struct Subdivisions {
     value: usize,
 }
 
+#[derive(Resource)]
+struct MouseState {
+    dragging: bool,
+    last_position: Vec2,
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(WireframePlugin)
         .insert_resource(Subdivisions { value: 0 })
+        .insert_resource(MouseState {
+            dragging: false,
+            last_position: Vec2::ZERO,
+        })
         .add_systems(Startup, setup)
         .add_systems(Update, rotate_shape)
         .add_systems(Update, handle_ui_interactions)
+        .add_systems(Update, mouse_input_system)
         .run();
 }
 
@@ -234,6 +249,43 @@ fn handle_ui_interactions(
     }
 }
 
+fn mouse_input_system(
+    mut mouse_state: ResMut<MouseState>,
+    mut mousebtn_evr: EventReader<MouseButtonInput>,
+    mut mousemov_evr: EventReader<MouseMotion>,
+    mut sphere_query: Query<(&mut Transform, &Sphere)>,
+) { 
+
+    //handle rotation state
+    for event in mousebtn_evr.read() {
+        match event.button {
+            MouseButton::Left => {
+                match event.state {
+                    ButtonState::Pressed => {
+                        mouse_state.dragging = true;
+                    }
+                    ButtonState::Released => {
+                        mouse_state.dragging = false;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    //handle rotation
+    for event in mousemov_evr.read() {
+        let MouseMotion { delta } = event;
+        
+        if mouse_state.dragging {
+            for (mut transform, _) in &mut sphere_query {
+                transform.rotate_x(-delta.y * 0.01);
+                transform.rotate_y(-delta.x * 0.01);
+            }
+        }
+    }
+}
+ 
 fn create_geodesic_sphere(commands: &mut Commands, meshes: &mut ResMut<Assets<Mesh>>, materials: &mut ResMut<Assets<StandardMaterial>>, subdivisions: usize){
 
     let kind: SphereKind = mesh::SphereKind::Ico {
@@ -252,7 +304,7 @@ fn create_geodesic_sphere(commands: &mut Commands, meshes: &mut ResMut<Assets<Me
             ..Default::default()
         }, 
         Wireframe,
-        Rotateable {speed: 0.05},
+        Rotateable {speed: 0.00},
         Sphere,
     ));
 }
@@ -262,3 +314,4 @@ fn rotate_shape(mut shapes: Query<(&mut Transform, &Rotateable)>, timer: Res<Tim
         transform.rotate_y(shape.speed * TAU * timer.delta_seconds());
     }
 }
+
