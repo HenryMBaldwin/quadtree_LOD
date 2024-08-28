@@ -84,6 +84,8 @@ struct SphereState {
     transform: Transform,
     //list of triangles
     triangles: Vec<Triangle>,
+    //handle to the mesh
+    mesh: Handle<Mesh>,
 }
 
 fn main() {
@@ -99,6 +101,7 @@ fn main() {
             rotating: false,
             transform: Transform::from_xyz(0.0, 0.0, 0.0),
             triangles: Vec::new(),
+            mesh: Handle::default(),
         })
         .insert_resource(CharacterState { 
             center: Vec3::Z,
@@ -115,6 +118,7 @@ fn main() {
         .add_systems(Update, handle_mouse_scroll)
         .add_systems(Update, track_sphere_state)
         .add_systems(Update, handle_character_movement)
+        .add_systems(Update, update_colors)
         .run();
 }
 
@@ -125,7 +129,8 @@ fn setup(
     asset_server: Res<AssetServer>,
     subdivisions: Res<Subdivisions>,
     mut ambient_light: ResMut<AmbientLight>,
-    mut sphere_state: ResMut<SphereState>
+    mut sphere_state: ResMut<SphereState>,
+    character_state: Res<CharacterState>,
 ) {
     // Camera
     commands.spawn((
@@ -155,7 +160,7 @@ fn setup(
 
     //spawn initial sphere
     //create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
-    create_geodesic_sphere_tri(&mut commands, &mut meshes, &mut materials, sphere_state, asset_server.clone(), subdivisions.value);
+    create_geodesic_sphere_tri(&mut commands, &mut meshes, &mut materials, sphere_state, asset_server.clone(), subdivisions.value, character_state);
 
     // UI setup
     commands.spawn(NodeBundle {
@@ -293,6 +298,30 @@ fn handle_character_movement(
     time: Res<Time>,
     mut keybr_evr: EventReader<KeyboardInput>,
 ) {
+    //find closest triangle and store its id
+    let triangles = sphere_state.clone().triangles;
+    let mut closest_triangle_id = character_state.current_triangle_id;
+
+    //get closest triangle
+    let mut closest_distance = f32::INFINITY;
+    for triangle in triangles {
+        //apply sphere transform to triangle
+        let triangle_rot = Triangle3d::new(
+            sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[0]),
+            sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[1]),
+            sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[2]),
+        );
+
+        //get centroid of triangle
+        let centroid = triangle_rot.centroid();
+        let distance = (character_state.center - centroid).length();
+        if distance < closest_distance {
+            closest_distance = distance;
+            closest_triangle_id = triangle.index;
+        }
+    }
+
+    character_state.current_triangle_id = closest_triangle_id;
 
     let mut speed = 0.0;
     let mut turn_rate = 0.0;
@@ -436,6 +465,7 @@ fn handle_ui_interactions(
     sphere_query: Query<Entity, With<Sphere>>,
     mut sphere_state: ResMut<SphereState>,
     asset_server: Res<AssetServer>,
+    character_state: Res<CharacterState>,
 ) {
     let old_subdivisions = subdivisions.value;
     for (interaction, mut background_color, increment, decrement) in &mut interaction_query {
@@ -475,7 +505,7 @@ fn handle_ui_interactions(
     //if subdivisions have changed, create new sphere
     if subdivisions.value != old_subdivisions {
         //create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, sphere_state, subdivisions.value);
-        create_geodesic_sphere_tri(&mut commands, &mut meshes, &mut materials, sphere_state, asset_server.clone(), subdivisions.value);
+        create_geodesic_sphere_tri(&mut commands, &mut meshes, &mut materials, sphere_state, asset_server.clone(), subdivisions.value, character_state);
     }
 }
 
@@ -596,6 +626,7 @@ fn create_geodesic_sphere_tri(
     mut sphere_state: ResMut<SphereState>,
     asset_server: AssetServer,
     subdivisions: usize,
+    character_state: Res<CharacterState>,
 ){
 
     //define unit sphere vertices for icosahedron
@@ -679,7 +710,7 @@ fn create_geodesic_sphere_tri(
         let mut colors: Vec<[f32; 4]> = Vec::new();
 
         for triangle in triangles.clone() {
-            let color = get_color(&triangle);
+            let color = get_color(&triangle, character_state.current_triangle_id);
 
             for &vertex in &triangle.triangle.vertices {
                 positions.push(vertex);
@@ -697,9 +728,13 @@ fn create_geodesic_sphere_tri(
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
         mesh.insert_indices(Indices::U32(indices));
+
+        let mesh_handle = meshes.add(mesh);
+        sphere_state.mesh = mesh_handle.clone();
+
         commands.spawn((
             PbrBundle {
-                mesh: meshes.add(mesh),
+                mesh: mesh_handle,
                 material: materials.add(StandardMaterial {
                     base_color: Color::srgb(1.0, 1.0, 1.0),
                     ..Default::default()
@@ -765,11 +800,36 @@ fn rotate_shape(mut shapes: Query<(&mut Transform, &Rotateable)>, timer: Res<Tim
     }
 }
 
+fn update_colors(
+    mut meshes: ResMut<Assets<Mesh>>,
+    sphere_state: Res<SphereState>,
+    character_state: Res<CharacterState>,
+) {
+    let closest_id = character_state.current_triangle_id;
+    if let Some(mesh) = meshes.get_mut(&sphere_state.mesh) {
+        let mut colors: Vec<[f32; 4]> = Vec::new();
+
+        for triangle in &sphere_state.triangles {
+            let color = get_color(triangle, closest_id);
+
+            for _ in 0..3 {
+                colors.push(color);
+            }
+        }
+
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors); // Update vertex colors
+    }
+}
 //dummy function to get color
-fn get_color(triangle: &Triangle) -> [f32; 4] {
+fn get_color(triangle: &Triangle, closest_triangle_id: usize) -> [f32; 4] {
+
+    //make triangle pure red of its the closest triangle
+    if triangle.index == closest_triangle_id {
+        return [1.0, 0.0, 0.0, 1.0];
+    }
     let mut rng = rand::thread_rng();
-    [
-        rng.gen::<f32>(), // Red
+    [   
+        0.0, // Red
         rng.gen::<f32>(), // Green
         rng.gen::<f32>(), // Blue
         1.0,              // Alpha (fully opaque)
