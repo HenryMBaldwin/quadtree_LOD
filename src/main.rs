@@ -54,12 +54,12 @@ struct MouseState {
     dragging: bool,
 }
 
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 struct CharacterState {
     //true position on unit sphere
     center: Vec3,
     //projected position onto nearest triangle
-    visual_center: Vec3,
+    visual_transform: Transform,
     //local forward vector
     forward: Vec3,
     //local up vector
@@ -101,7 +101,7 @@ fn main() {
         })
         .insert_resource(CharacterState { 
             center: Vec3::Z,
-            visual_center: Vec3::Z,
+            visual_transform: Transform::from_xyz(0.0, 0.0, 0.0),
             current_triangle_id: 0, 
             forward: Vec3::Y,
             right: Vec3::Y.cross(Vec3::Z),
@@ -321,8 +321,8 @@ fn handle_character_movement(
     for (_, mut transform) in &mut character_query {
 
         let delta_rotation = sphere_state.transform.rotation * character_state.sphere_transform.rotation.inverse();
-        transform.translation = delta_rotation.mul_vec3(character_state.center);
-        character_state.center = transform.translation;
+        character_state.center = delta_rotation.mul_vec3(character_state.center);
+        // character_state.center = transform.translation;
 
         //recalc up
         character_state.up = character_state.center.normalize();
@@ -341,8 +341,8 @@ fn handle_character_movement(
         character_state.sphere_transform = sphere_state.transform;
         
         // Update position based on input
-        transform.translation =  (character_state.center + character_state.forward * speed * dt).normalize();
-        character_state.center = transform.translation;
+        character_state.center =  (character_state.center + character_state.forward * speed * dt).normalize();
+        // character_state.center = transform.translation;
 
         // Update forward direction
         character_state.forward = (character_state.forward - transform.translation * speed * dt -   character_state.right * turn_rate * dt).normalize();
@@ -356,12 +356,69 @@ fn handle_character_movement(
         character_state.right = (character_state.right - character_state.forward.dot(character_state.right) * character_state.forward).normalize();
         character_state.up = character_state.center.normalize();
 
-        //calculate models rotation
+        // calculate models rotation
         let rotation = Quat::from_mat3(&Mat3::from_cols(character_state.right, character_state.up, character_state.forward));
         transform.rotation = rotation;
-        
+        transform.translation = character_state.center;
+
+        // *transform = calculate_visual_transform(character_state.clone(), sphere_state.clone())
         
     }
+}
+
+fn calculate_visual_transform(character_state: CharacterState, sphere_state: SphereState) -> Transform {
+    
+    //get closest triangle
+    let mut closest_triangle_id = 0;
+    let mut closest_distance = f32::INFINITY;
+
+    let triangles = &sphere_state.triangles;
+    for triangle in triangles {
+        //apply sphere transform to triangle
+        let triangle_rot = Triangle3d::new(
+            sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[0]),
+            sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[1]),
+            sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[2]),
+        );
+
+        //get centroid of triangle
+        let centroid = triangle_rot.centroid();
+        let distance = (character_state.center - centroid).length();
+        if distance < closest_distance {
+            closest_distance = distance;
+            closest_triangle_id = triangle.index;
+        }
+    }
+
+    //project character onto plane of triangle
+    let triangle = &triangles[closest_triangle_id];
+    let triangle_rot = Triangle3d::new(
+        sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[0]),
+        sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[1]),
+        sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[2]),
+    );
+
+
+
+    let normal = triangle_rot.normal().expect("L").as_vec3();
+
+    //project character position onto triangle plane
+    let projected_position = character_state.center - normal * normal.dot(character_state.center - triangle_rot.centroid());
+
+    //calc forward vector
+    let projected_forward = (character_state.forward - normal * normal.dot(character_state.forward)).normalize();
+
+    //calc projected right vector
+    let projected_right = normal.cross(projected_forward).normalize();
+
+    //creat rotation matrix
+    let rotation = Quat::from_mat3(&Mat3::from_cols(projected_right, normal, projected_forward));
+
+
+    let mut transform = Transform::IDENTITY;
+    transform.rotation = rotation;
+    transform.translation = projected_position;
+    transform
 }
 
 
@@ -483,14 +540,6 @@ fn handle_mouse_rotate(
     //track transform of sphere
     for (transform, _) in &mut sphere_transform_query {
         sphere_state.transform = *transform;
-        for triangle in &mut sphere_state.triangles {
-            triangle.triangle = Triangle3d::new(
-                transform.rotation.mul_vec3(triangle.triangle.vertices[0]),
-                transform.rotation.mul_vec3(triangle.triangle.vertices[1]),
-                transform.rotation.mul_vec3(triangle.triangle.vertices[2]),
-            );
-        }
-        
     }
 }
 
