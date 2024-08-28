@@ -1,6 +1,7 @@
 use std::f32::consts::TAU;
 
 
+use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::{self, MouseButtonInput, MouseMotion, MouseWheel};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
@@ -9,9 +10,19 @@ use bevy::render::mesh::{self, Indices, PrimitiveTopology, SphereKind, SphereMes
 use bevy::pbr::wireframe::{Wireframe, WireframePlugin};
 use bevy::render::render_asset::RenderAssetUsages;
 
+const PHI: f32 = 1.61803398875;
 
 #[derive(Component)]
 struct Character;
+
+#[derive(Clone)]
+struct Triangle{
+    //index is pretty much arbitrary but unique, but it is useful for debugging
+    index: usize,
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+}
 
 #[derive(Component)]
 struct Rotateable {
@@ -47,14 +58,17 @@ struct MouseState {
 struct CharacterState {
     speed: f32,
 }
+
 //global state of sphere, so modification of the number of subdivisions can be done without losing the current state of the sphere
 #[derive(Resource, Clone)]
 struct SphereState {
     wireframe: bool,
     //if constant rotation is enabled
     rotating: bool,
-    //curreent transform of the sphere
+    //current transform of the sphere
     transform: Transform,
+    //list of triangles
+    triangles: Vec<Triangle>,
 }
 
 fn main() {
@@ -69,13 +83,16 @@ fn main() {
             wireframe: false,
             rotating: false,
             transform: Transform::from_xyz(0.0, 0.0, 0.0),
+            triangles: Vec::new(),
         })
+        .insert_resource(CharacterState { speed: 1.0 })
         .add_systems(Startup, setup)
         .add_systems(Update, rotate_shape)
         .add_systems(Update, handle_ui_interactions)
         .add_systems(Update, handle_mouse_rotate)
         .add_systems(Update, handle_mouse_scroll)
         .add_systems(Update, track_sphere_state)
+        // .add_systems(Update, handle_character_movement)
         .run();
 }
 
@@ -115,7 +132,8 @@ fn setup(
     ambient_light.brightness = 1000.0;
 
     //spawn initial sphere
-    create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
+    //create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
+    create_geodesic_sphere_tri(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
 
     // UI setup
     commands.spawn(NodeBundle {
@@ -245,6 +263,8 @@ fn setup(
     });
 }
 
+
+
 fn handle_ui_interactions(
     mut interaction_query: Query<
         (&Interaction, &mut BackgroundColor, Option<&SubdivisionIncrement>, Option<&SubdivisionDecrement>),
@@ -283,7 +303,8 @@ fn handle_ui_interactions(
                 }
 
                 // Recreate the geodesic sphere with the new subdivisions
-                create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
+                //create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
+                create_geodesic_sphere_tri(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
 
                 *background_color = BackgroundColor(Color::srgb(0.5, 0.5, 0.5));
             }
@@ -343,13 +364,17 @@ fn handle_mouse_rotate(
         }
     }
  }
+
+ //mut gets triangles from sphere
+
  //tracks state of the sphere
  fn track_sphere_state( 
     mut sphere_state: ResMut<SphereState>,
-    sphere_query: Query<(&Transform, &Sphere)>,
+    mut sphere_transform_query: Query<(&Transform, &Sphere)>,
 ) {
 
-    for (transform, _) in &mut sphere_query.iter() {
+    //track transform of sphere
+    for (transform, _) in &mut sphere_transform_query {
         sphere_state.transform = *transform;
     }
 }
@@ -377,6 +402,152 @@ fn create_geodesic_sphere(commands: &mut Commands, meshes: &mut ResMut<Assets<Me
         Sphere,
     ));
 }
+
+fn create_geodesic_sphere_tri(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    sphere_state: SphereState,
+    subdivisions: usize,
+){
+
+    //define unit sphere vertices for icosahedron
+    let mut vertices: Vec<Vec3> = vec![
+        Vec3::new(-1.0,  PHI, 0.0).normalize(),
+        Vec3::new( 1.0,  PHI, 0.0).normalize(),
+        Vec3::new(-1.0, -PHI, 0.0).normalize(),
+        Vec3::new( 1.0, -PHI, 0.0).normalize(),
+
+        Vec3::new(0.0, -1.0,  PHI).normalize(),
+        Vec3::new(0.0,  1.0,  PHI).normalize(),
+        Vec3::new(0.0, -1.0, -PHI).normalize(),
+        Vec3::new(0.0,  1.0, -PHI).normalize(),
+
+        Vec3::new( PHI, 0.0, -1.0).normalize(),
+        Vec3::new( PHI, 0.0,  1.0).normalize(),
+        Vec3::new(-PHI, 0.0, -1.0).normalize(),
+        Vec3::new(-PHI, 0.0,  1.0).normalize(),
+    ];
+
+    let mut index = 0;
+    let mut triangles: Vec<Triangle> = vec![
+        Triangle {index: {index.clone()}, a: vertices[0], b: vertices[11], c: vertices[5]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[0], b: vertices[5], c: vertices[1]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[0], b: vertices[1], c: vertices[7]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[0], b: vertices[7], c: vertices[10]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[0], b: vertices[10], c: vertices[11]},
+
+        Triangle {index: {index += 1; index.clone()}, a: vertices[1], b: vertices[5], c: vertices[9]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[5], b: vertices[11], c: vertices[4]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[11], b: vertices[10], c: vertices[2]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[10], b: vertices[7], c: vertices[6]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[7], b: vertices[1], c: vertices[8]},
+
+        Triangle {index: {index += 1; index.clone()}, a: vertices[3], b: vertices[9], c: vertices[4]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[3], b: vertices[4], c: vertices[2]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[3], b: vertices[2], c: vertices[6]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[3], b: vertices[6], c: vertices[8]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[3], b: vertices[8], c: vertices[9]},
+
+        Triangle {index: {index += 1; index.clone()}, a: vertices[4], b: vertices[9], c: vertices[5]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[2], b: vertices[4], c: vertices[11]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[6], b: vertices[2], c: vertices[10]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[8], b: vertices[6], c: vertices[7]},
+        Triangle {index: {index += 1; index.clone()}, a: vertices[9], b: vertices[8], c: vertices[1]},
+    ];
+
+    //subdivide correct number of times
+    for i in 0..subdivisions {
+        let (new_vertices, new_triangles) = subdivide(triangles);
+        vertices = new_vertices;
+        triangles = new_triangles;
+    }
+    let individual = false;
+    //create each triangle mesh individually
+    if individual {
+        for triangle in triangles {
+            let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![triangle.a, triangle.b, triangle.c]);
+            mesh.insert_indices(Indices::U32(vec![0, 1, 2]));
+            commands.spawn((
+                PbrBundle {
+                    mesh: meshes.add(mesh),
+                    material: materials.add(StandardMaterial {
+                        base_color: Color::srgb(1.0, 1.0, 1.0),
+                        ..Default::default()
+                    }), 
+                    transform: sphere_state.transform, 
+                    ..Default::default()
+                }, 
+                Wireframe,
+                Sphere,
+            ));
+        }
+    }
+    else {
+        //create one mesh with all triangles
+        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        let mut positions: Vec<Vec3> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+        for triangle in triangles {
+            positions.push(triangle.a);
+            positions.push(triangle.b);
+            positions.push(triangle.c);
+            indices.push(indices.len() as u32);
+            indices.push(indices.len() as u32);
+            indices.push(indices.len() as u32);
+        }
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        mesh.insert_indices(Indices::U32(indices));
+        commands.spawn((
+            PbrBundle {
+                mesh: meshes.add(mesh),
+                material: materials.add(StandardMaterial {
+                    base_color: Color::srgb(1.0, 1.0, 1.0),
+                    ..Default::default()
+                }), 
+                transform: sphere_state.transform, 
+                ..Default::default()
+            }, 
+            Wireframe,
+            Sphere,
+        ));
+    }
+}
+
+fn subdivide(triangles: Vec<Triangle>) -> (Vec<Vec3>, Vec<Triangle>) {
+    let mut new_vertices: Vec<Vec3> = Vec::new();
+    let mut new_triangles: Vec<Triangle> = Vec::new();
+    
+        for triangle in triangles {
+
+            //get vertices of triangle
+            let a = triangle.a;
+            let b = triangle.b;
+            let c = triangle.c;
+
+            //get new vertices and normalize
+            let ab = a.midpoint(b).normalize();
+            let bc = b.midpoint(c).normalize();
+            let ca =  c.midpoint(a).normalize();
+
+            new_vertices.push(a);
+            new_vertices.push(b);
+            new_vertices.push(c);
+            new_vertices.push(ab);
+            new_vertices.push(bc);
+            new_vertices.push(ca);
+            
+            let mut index = 0;
+            new_triangles.push(Triangle {index: {index += 1; index.clone()}, a: a, b: ab, c: ca});
+            new_triangles.push(Triangle {index: {index += 1; index.clone()}, a: b, b: bc, c: ab});
+            new_triangles.push(Triangle {index: {index += 1; index.clone()}, a: c, b: ca, c: bc});
+            new_triangles.push(Triangle {index: {index += 1; index.clone()}, a: ab, b: bc, c: ca});
+        }
+
+    (new_vertices, new_triangles)
+}
+
 
 fn rotate_shape(mut shapes: Query<(&mut Transform, &Rotateable)>, timer: Res<Time>) {
     for (mut transform, shape) in &mut shapes {
