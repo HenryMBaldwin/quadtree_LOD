@@ -285,15 +285,29 @@ fn setup(
 fn handle_character_movement(
     mut character_state: ResMut<CharacterState>,
     mut character_query: Query<(&Character, &mut Transform)>,
+    sphere_state: Res<SphereState>,
     time: Res<Time>,
 ) {
 
+    
+    
     let dt = time.delta_seconds();
 
     let turn_rate = 0.0;
     let speed = 0.1;
     for (_, mut transform) in &mut character_query {
         
+        //apply sphere transform to character
+        transform.translation = sphere_state.transform.rotation.mul_vec3(character_state.center);
+        character_state.center = transform.translation;
+
+        //recalc up
+        character_state.up = character_state.center.normalize();
+
+        //apply sphere transform to forward and right
+        character_state.forward = sphere_state.transform.rotation.mul_vec3(character_state.forward);
+        character_state.right = sphere_state.transform.rotation.mul_vec3(character_state.right);
+
         // Update position
         transform.translation =  (character_state.center + character_state.forward * speed * dt).normalize();
         character_state.center = transform.translation;
