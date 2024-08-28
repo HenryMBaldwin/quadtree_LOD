@@ -19,9 +19,7 @@ struct Character;
 struct Triangle{
     //index is pretty much arbitrary but unique, but it is useful for debugging
     index: usize,
-    a: Vec3,
-    b: Vec3,
-    c: Vec3,
+    triangle: Triangle3d,
 }
 
 #[derive(Component)]
@@ -56,7 +54,8 @@ struct MouseState {
 
 #[derive(Resource)]
 struct CharacterState {
-    speed: f32,
+    center: Vec3,
+    current_triangle_id: usize,
 }
 
 //global state of sphere, so modification of the number of subdivisions can be done without losing the current state of the sphere
@@ -85,14 +84,16 @@ fn main() {
             transform: Transform::from_xyz(0.0, 0.0, 0.0),
             triangles: Vec::new(),
         })
-        .insert_resource(CharacterState { speed: 1.0 })
+        .insert_resource(CharacterState { center: Vec3::ZERO, current_triangle_id: 0 })
         .add_systems(Startup, setup)
         .add_systems(Update, rotate_shape)
         .add_systems(Update, handle_ui_interactions)
         .add_systems(Update, handle_mouse_rotate)
         .add_systems(Update, handle_mouse_scroll)
         .add_systems(Update, track_sphere_state)
-        // .add_systems(Update, handle_character_movement)
+        .add_systems(Update, track_character_state)
+        .add_systems(Update, handle_character_movement)
+        //.add_systems(Update, rotate_character)
         .run();
 }
 
@@ -103,12 +104,12 @@ fn setup(
     asset_server: Res<AssetServer>,
     subdivisions: Res<Subdivisions>,
     mut ambient_light: ResMut<AmbientLight>,
-    sphere_state: Res<SphereState>
+    mut sphere_state: ResMut<SphereState>
 ) {
     // Camera
     commands.spawn((
         Camera3dBundle {
-            transform: Transform::from_xyz(0.0, 0.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
+            transform: Transform::from_xyz(0.0, 0.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
             ..Default::default()
         },
         Camera,
@@ -117,12 +118,12 @@ fn setup(
     //character (cube for now)
     commands.spawn((
         PbrBundle {
-            mesh: meshes.add(Cuboid::new(0.05, 0.05, 0.05)),
+            mesh: meshes.add(Cuboid::new(0.02, 0.02, 0.02)),
             material: materials.add(StandardMaterial {
                 base_color: Color::srgb(0.0, 0.8, 0.2),
                 ..Default::default()
             }),
-            transform: Transform::from_xyz(0.0, 0.0, 0.5),
+            transform: Transform::from_xyz(0.0, 0.0, 1.0),
             ..Default::default()
         },
         Character,
@@ -133,7 +134,7 @@ fn setup(
 
     //spawn initial sphere
     //create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
-    create_geodesic_sphere_tri(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
+    create_geodesic_sphere_tri(&mut commands, &mut meshes, &mut materials, sphere_state, subdivisions.value);
 
     // UI setup
     commands.spawn(NodeBundle {
@@ -264,6 +265,132 @@ fn setup(
 }
 
 
+fn handle_character_movement(
+    mut character_query: Query<(&Character, &mut Transform)>,
+    sphere_state: Res<SphereState>,
+    mut keybr_evr: EventReader<KeyboardInput>,
+    mut character_state: ResMut<CharacterState>,
+){
+    //get the center point of the "feet" of the character
+    
+    let center = character_state.center;
+    //get closest triangle
+    let triangles = &sphere_state.triangles;
+    let mut closest_triangle: Triangle = triangles[0].clone();
+    let mut closest_distance: f32 = 100000.0;
+    for triangle in triangles {
+        let center_point = triangle.triangle.centroid();
+        let distance = center.distance(center_point);
+        if distance < closest_distance {
+            closest_distance = distance;
+            closest_triangle = triangle.clone();
+        }
+    }
+
+    let closest_triangle_id = closest_triangle.index;
+
+    //get normal of triangle
+    let normal = closest_triangle.triangle.normal().expect("Triangle does not have a normal");
+
+    
+
+    for (_, mut transform) in &mut character_query {
+        let character_position = transform.translation;
+
+        // Calculate the vector from the triangle's centroid to the character's position
+        let to_character = character_position - closest_triangle.triangle.centroid();
+
+        // Project this vector onto the plane of the triangle
+        let projection_on_plane = to_character - normal * to_character.dot(normal.as_vec3());
+
+        // Update the character's position to be on the triangle's plane
+        
+
+        // Orient the character to be perpendicular to the normal only when it lands on a new triangle
+        // (or in cases where you need to reset the orientation)
+        // This should be done outside of the movement loop or conditionally based on certain events
+        if character_state.current_triangle_id != closest_triangle_id {
+            transform.translation = closest_triangle.triangle.centroid() + projection_on_plane;
+            transform.rotation = Quat::from_rotation_arc(Vec3::Y, normal.as_vec3());
+            character_state.current_triangle_id = closest_triangle_id;
+        }
+    }
+
+    //listen for keyboard input
+    for event in keybr_evr.read() {
+        match event.key_code {
+            KeyCode::KeyW => {
+                //move character forward as if the normal is the up vector
+                for (_, mut transform) in &mut character_query {
+                    // Assuming transform.rotation represents the character's current rotation
+                    // Get the character's forward direction (Y-axis in local space)
+                    let local_forward = Vec3::Y;
+                    
+                    // Transform the forward direction by the character's current rotation to get the world space forward direction
+                    let world_forward = transform.rotation * local_forward;
+                    
+                    // Project the forward direction onto the plane of the triangle
+                    let forward_in_plane = world_forward - normal * world_forward.dot(normal.as_vec3());
+
+                    // Normalize the direction to ensure consistent movement speed
+                    let forward_in_plane_normalized = forward_in_plane.normalize();
+
+                    // Move the character forward by a small amount (e.g., 0.1 units)
+                    let movement_speed = 0.01;
+                    transform.translation += forward_in_plane_normalized * movement_speed;
+                }
+            },
+            KeyCode::KeyS => {
+                // Move character backward as if the normal is the up vector
+                for (_, mut transform) in &mut character_query {
+                    // Assuming transform.rotation represents the character's current rotation
+                    let local_forward = Vec3::Y;
+                    let world_forward = transform.rotation * local_forward;
+                    
+                    // Project the forward direction onto the plane of the triangle
+                    let forward_in_plane = world_forward - normal * world_forward.dot(normal.as_vec3());
+                    let forward_in_plane_normalized = forward_in_plane.normalize();
+                    
+                    // Move the character backward by a small amount (e.g., 0.1 units)
+                    let movement_speed = -0.01;  // Negative for backward movement
+                    transform.translation += forward_in_plane_normalized * movement_speed;
+                }
+            },
+            //rotate character around its up access relative to its bottom face
+            KeyCode::KeyA => {
+                // Rotate character left (counterclockwise)
+                for (_, mut transform) in &mut character_query {
+                    // Determine the amount to rotate (e.g., 10 degrees converted to radians)
+                    let rotation_angle = 10.0_f32.to_radians();
+                    
+                    // Create a quaternion representing a rotation around the normal
+                    let rotation = Quat::from_axis_angle(normal.as_vec3(), rotation_angle);
+                    
+                    // Apply the rotation to the character's current rotation
+                    transform.rotation = rotation * transform.rotation;
+                }
+            },
+            KeyCode::KeyD => {
+                // Rotate character right (clockwise)
+                for (_, mut transform) in &mut character_query {
+                    // Determine the amount to rotate (e.g., 10 degrees converted to radians)
+                    let rotation_angle = -10.0_f32.to_radians();  // Negative for clockwise rotation
+                    
+                    // Create a quaternion representing a rotation around the normal
+                    let rotation = Quat::from_axis_angle(normal.as_vec3(), rotation_angle);
+                    
+                    // Apply the rotation to the character's current rotation
+                    transform.rotation = rotation * transform.rotation;
+                }
+            },
+            _ => {}
+        }
+    }
+    //update character state
+    for (_, transform) in &mut character_query {
+        character_state.center = transform.translation;
+    }
+}
 
 fn handle_ui_interactions(
     mut interaction_query: Query<
@@ -276,14 +403,15 @@ fn handle_ui_interactions(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     sphere_query: Query<Entity, With<Sphere>>,
-    sphere_state: Res<SphereState>
+    mut sphere_state: ResMut<SphereState>
 ) {
+    let old_subdivisions = subdivisions.value;
     for (interaction, mut background_color, increment, decrement) in &mut interaction_query {
         match *interaction {
             Interaction::Pressed => {
                 // Check if this is an increment or decrement button
                 if increment.is_some() {
-                    if subdivisions.value < 15 {
+                    if subdivisions.value < 6 {
                         subdivisions.value += 1;
                     }
                 } else if decrement.is_some() {
@@ -297,14 +425,12 @@ fn handle_ui_interactions(
                     text.sections[0].value = format!("{}", subdivisions.value);
                 }
 
-                // Remove the old sphere
-                for entity in sphere_query.iter() {
-                    commands.entity(entity).despawn_recursive();
+                // Remove the old sphere if subdivisions have changed
+                if old_subdivisions != subdivisions.value {
+                    for entity in sphere_query.iter() {
+                        commands.entity(entity).despawn_recursive();
+                    }
                 }
-
-                // Recreate the geodesic sphere with the new subdivisions
-                //create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
-                create_geodesic_sphere_tri(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
 
                 *background_color = BackgroundColor(Color::srgb(0.5, 0.5, 0.5));
             }
@@ -312,6 +438,12 @@ fn handle_ui_interactions(
                 *background_color = BackgroundColor(Color::srgb(0.5, 0.5, 0.5));
             }
         }
+    }
+
+    //if subdivisions have changed, create new sphere
+    if subdivisions.value != old_subdivisions {
+        //create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, sphere_state, subdivisions.value);
+        create_geodesic_sphere_tri(&mut commands, &mut meshes, &mut materials, sphere_state, subdivisions.value);
     }
 }
 
@@ -350,8 +482,9 @@ fn handle_mouse_rotate(
             }
         }
     }
-
 }
+
+
  
  fn handle_mouse_scroll(
     mut mousescroll_evr: EventReader<MouseWheel>,
@@ -376,6 +509,34 @@ fn handle_mouse_rotate(
     //track transform of sphere
     for (transform, _) in &mut sphere_transform_query {
         sphere_state.transform = *transform;
+        for triangle in &mut sphere_state.triangles {
+            triangle.triangle = Triangle3d::new(
+                transform.rotation.mul_vec3(triangle.triangle.vertices[0]),
+                transform.rotation.mul_vec3(triangle.triangle.vertices[1]),
+                transform.rotation.mul_vec3(triangle.triangle.vertices[2]),
+            );
+        }
+    }
+}
+
+//track character state
+fn track_character_state(
+    mut character_state: ResMut<CharacterState>,
+    mut character_query: Query<(&Character, &Transform)>,
+) {
+    for (_, transform) in &mut character_query {
+        character_state.center = transform.translation;
+    }
+}
+
+//make sure the character rotates with the sphere
+fn rotate_character(
+    mut sphere_state: ResMut<SphereState>,
+    mut character_query: Query<(&Character, &mut Transform)>,
+) {
+    //apply the sphere transform to the character
+    for (character, mut transform) in &mut character_query {
+        *transform = sphere_state.transform;
     }
 }
 
@@ -407,7 +568,7 @@ fn create_geodesic_sphere_tri(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
-    sphere_state: SphereState,
+    mut sphere_state: ResMut<SphereState>,
     subdivisions: usize,
 ){
 
@@ -429,31 +590,31 @@ fn create_geodesic_sphere_tri(
         Vec3::new(-PHI, 0.0,  1.0).normalize(),
     ];
 
-    let mut index = 0;
+    let mut index = 1;
     let mut triangles: Vec<Triangle> = vec![
-        Triangle {index: {index.clone()}, a: vertices[0], b: vertices[11], c: vertices[5]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[0], b: vertices[5], c: vertices[1]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[0], b: vertices[1], c: vertices[7]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[0], b: vertices[7], c: vertices[10]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[0], b: vertices[10], c: vertices[11]},
+        Triangle {index: {index.clone()}, triangle: Triangle3d::new(vertices[0], vertices[11], vertices[5])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[0],  vertices[5], vertices[1])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[0],  vertices[1], vertices[7])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[0],  vertices[7], vertices[10])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[0],  vertices[10], vertices[11])},
 
-        Triangle {index: {index += 1; index.clone()}, a: vertices[1], b: vertices[5], c: vertices[9]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[5], b: vertices[11], c: vertices[4]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[11], b: vertices[10], c: vertices[2]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[10], b: vertices[7], c: vertices[6]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[7], b: vertices[1], c: vertices[8]},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[1],  vertices[5], vertices[9])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[5],  vertices[11], vertices[4])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[11],  vertices[10], vertices[2])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[10],  vertices[7], vertices[6])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[7],  vertices[1], vertices[8])},
 
-        Triangle {index: {index += 1; index.clone()}, a: vertices[3], b: vertices[9], c: vertices[4]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[3], b: vertices[4], c: vertices[2]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[3], b: vertices[2], c: vertices[6]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[3], b: vertices[6], c: vertices[8]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[3], b: vertices[8], c: vertices[9]},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[3],  vertices[9], vertices[4])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[3],  vertices[4], vertices[2])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[3],  vertices[2], vertices[6])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[3],  vertices[6], vertices[8])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[3],  vertices[8], vertices[9])},
 
-        Triangle {index: {index += 1; index.clone()}, a: vertices[4], b: vertices[9], c: vertices[5]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[2], b: vertices[4], c: vertices[11]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[6], b: vertices[2], c: vertices[10]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[8], b: vertices[6], c: vertices[7]},
-        Triangle {index: {index += 1; index.clone()}, a: vertices[9], b: vertices[8], c: vertices[1]},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[4],  vertices[9], vertices[5])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[2],  vertices[4], vertices[11])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[6],  vertices[2], vertices[10])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[8],  vertices[6], vertices[7])},
+        Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(vertices[9],  vertices[8], vertices[1])},
     ];
 
     //subdivide correct number of times
@@ -465,9 +626,9 @@ fn create_geodesic_sphere_tri(
     let individual = false;
     //create each triangle mesh individually
     if individual {
-        for triangle in triangles {
+        for triangle in triangles.clone() {
             let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
-            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![triangle.a, triangle.b, triangle.c]);
+            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![triangle.triangle.vertices[0], triangle.triangle.vertices[1], triangle.triangle.vertices[2]]);
             mesh.insert_indices(Indices::U32(vec![0, 1, 2]));
             commands.spawn((
                 PbrBundle {
@@ -489,10 +650,10 @@ fn create_geodesic_sphere_tri(
         let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
         let mut positions: Vec<Vec3> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
-        for triangle in triangles {
-            positions.push(triangle.a);
-            positions.push(triangle.b);
-            positions.push(triangle.c);
+        for triangle in triangles.clone() {
+            positions.push(triangle.triangle.vertices[0]);
+            positions.push(triangle.triangle.vertices[1]);
+            positions.push(triangle.triangle.vertices[2]);
             indices.push(indices.len() as u32);
             indices.push(indices.len() as u32);
             indices.push(indices.len() as u32);
@@ -513,6 +674,9 @@ fn create_geodesic_sphere_tri(
             Sphere,
         ));
     }
+
+    //add triangles to sphere state
+    sphere_state.triangles = triangles;
 }
 
 fn subdivide(triangles: Vec<Triangle>) -> (Vec<Vec3>, Vec<Triangle>) {
@@ -522,9 +686,9 @@ fn subdivide(triangles: Vec<Triangle>) -> (Vec<Vec3>, Vec<Triangle>) {
         for triangle in triangles {
 
             //get vertices of triangle
-            let a = triangle.a;
-            let b = triangle.b;
-            let c = triangle.c;
+            let a = triangle.triangle.vertices[0];
+            let b = triangle.triangle.vertices[1];
+            let c = triangle.triangle.vertices[2];
 
             //get new vertices and normalize
             let ab = a.midpoint(b).normalize();
@@ -538,11 +702,11 @@ fn subdivide(triangles: Vec<Triangle>) -> (Vec<Vec3>, Vec<Triangle>) {
             new_vertices.push(bc);
             new_vertices.push(ca);
             
-            let mut index = 0;
-            new_triangles.push(Triangle {index: {index += 1; index.clone()}, a: a, b: ab, c: ca});
-            new_triangles.push(Triangle {index: {index += 1; index.clone()}, a: b, b: bc, c: ab});
-            new_triangles.push(Triangle {index: {index += 1; index.clone()}, a: c, b: ca, c: bc});
-            new_triangles.push(Triangle {index: {index += 1; index.clone()}, a: ab, b: bc, c: ca});
+            let mut index = 1;
+            new_triangles.push(Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(a, ab, ca)});
+            new_triangles.push(Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(b, bc, ab)});
+            new_triangles.push(Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(c, ca, bc)});
+            new_triangles.push(Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(ab, bc, ca)});
         }
 
     (new_vertices, new_triangles)
