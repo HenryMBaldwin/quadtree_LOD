@@ -270,11 +270,8 @@ fn handle_character_movement(
     sphere_state: Res<SphereState>,
     mut keybr_evr: EventReader<KeyboardInput>,
     mut character_state: ResMut<CharacterState>,
-){
-    //get the center point of the "feet" of the character
-    
+) {
     let center = character_state.center;
-    //get closest triangle
     let triangles = &sphere_state.triangles;
     let mut closest_triangle: Triangle = triangles[0].clone();
     let mut closest_distance: f32 = 100000.0;
@@ -288,105 +285,75 @@ fn handle_character_movement(
     }
 
     let closest_triangle_id = closest_triangle.index;
-
-    //get normal of triangle
     let normal = closest_triangle.triangle.normal().expect("Triangle does not have a normal");
 
-    
-
+    // Orient the character to be perpendicular to the normal
     for (_, mut transform) in &mut character_query {
-        let character_position = transform.translation;
-
-        // Calculate the vector from the triangle's centroid to the character's position
-        let to_character = character_position - closest_triangle.triangle.centroid();
-
-        // Project this vector onto the plane of the triangle
-        let projection_on_plane = to_character - normal * to_character.dot(normal.as_vec3());
-
-        // Update the character's position to be on the triangle's plane
-        
-
-        // Orient the character to be perpendicular to the normal only when it lands on a new triangle
-        // (or in cases where you need to reset the orientation)
-        // This should be done outside of the movement loop or conditionally based on certain events
         if character_state.current_triangle_id != closest_triangle_id {
-            transform.translation = closest_triangle.triangle.centroid() + projection_on_plane;
             transform.rotation = Quat::from_rotation_arc(Vec3::Y, normal.as_vec3());
+
+            // Recalculate the forward direction to be in the plane of the triangle
+            // Use the cross product with a known vector not parallel to the normal
+            let arbitrary_vector = Vec3::X;
+            let forward_in_plane = normal.cross(arbitrary_vector).normalize();
+
+            // Rotate the character to face this new forward direction
+            let current_forward = transform.rotation * Vec3::Y;
+            let rotation_to_forward = Quat::from_rotation_arc(current_forward, forward_in_plane);
+            transform.rotation = rotation_to_forward * transform.rotation;
+
             character_state.current_triangle_id = closest_triangle_id;
         }
     }
 
-    //listen for keyboard input
+    for (_, mut transform) in &mut character_query {
+        let character_position = transform.translation;
+        let to_character = character_position - closest_triangle.triangle.centroid();
+        let projection_on_plane = to_character - normal * to_character.dot(normal.as_vec3());
+        transform.translation = closest_triangle.triangle.centroid() + projection_on_plane;
+    }
+
+    // Listen for keyboard input
     for event in keybr_evr.read() {
         match event.key_code {
             KeyCode::KeyW => {
-                //move character forward as if the normal is the up vector
                 for (_, mut transform) in &mut character_query {
-                    // Assuming transform.rotation represents the character's current rotation
-                    // Get the character's forward direction (Y-axis in local space)
                     let local_forward = Vec3::Y;
-                    
-                    // Transform the forward direction by the character's current rotation to get the world space forward direction
                     let world_forward = transform.rotation * local_forward;
-                    
-                    // Project the forward direction onto the plane of the triangle
                     let forward_in_plane = world_forward - normal * world_forward.dot(normal.as_vec3());
-
-                    // Normalize the direction to ensure consistent movement speed
                     let forward_in_plane_normalized = forward_in_plane.normalize();
-
-                    // Move the character forward by a small amount (e.g., 0.1 units)
                     let movement_speed = 0.01;
                     transform.translation += forward_in_plane_normalized * movement_speed;
                 }
             },
             KeyCode::KeyS => {
-                // Move character backward as if the normal is the up vector
                 for (_, mut transform) in &mut character_query {
-                    // Assuming transform.rotation represents the character's current rotation
                     let local_forward = Vec3::Y;
                     let world_forward = transform.rotation * local_forward;
-                    
-                    // Project the forward direction onto the plane of the triangle
                     let forward_in_plane = world_forward - normal * world_forward.dot(normal.as_vec3());
                     let forward_in_plane_normalized = forward_in_plane.normalize();
-                    
-                    // Move the character backward by a small amount (e.g., 0.1 units)
-                    let movement_speed = -0.01;  // Negative for backward movement
+                    let movement_speed = -0.01;
                     transform.translation += forward_in_plane_normalized * movement_speed;
                 }
             },
-            //rotate character around its up access relative to its bottom face
             KeyCode::KeyA => {
-                // Rotate character left (counterclockwise)
                 for (_, mut transform) in &mut character_query {
-                    // Determine the amount to rotate (e.g., 10 degrees converted to radians)
                     let rotation_angle = 10.0_f32.to_radians();
-                    
-                    // Create a quaternion representing a rotation around the normal
                     let rotation = Quat::from_axis_angle(normal.as_vec3(), rotation_angle);
-                    
-                    // Apply the rotation to the character's current rotation
                     transform.rotation = rotation * transform.rotation;
                 }
             },
             KeyCode::KeyD => {
-                // Rotate character right (clockwise)
                 for (_, mut transform) in &mut character_query {
-                    // Determine the amount to rotate (e.g., 10 degrees converted to radians)
-                    let rotation_angle = -10.0_f32.to_radians();  // Negative for clockwise rotation
-                    
-                    // Create a quaternion representing a rotation around the normal
+                    let rotation_angle = -10.0_f32.to_radians();
                     let rotation = Quat::from_axis_angle(normal.as_vec3(), rotation_angle);
-                    
-                    // Apply the rotation to the character's current rotation
                     transform.rotation = rotation * transform.rotation;
                 }
             },
             _ => {}
         }
     }
-    //update character state
+
     for (_, transform) in &mut character_query {
         character_state.center = transform.translation;
     }
@@ -509,13 +476,14 @@ fn handle_mouse_rotate(
     //track transform of sphere
     for (transform, _) in &mut sphere_transform_query {
         sphere_state.transform = *transform;
-        for triangle in &mut sphere_state.triangles {
-            triangle.triangle = Triangle3d::new(
-                transform.rotation.mul_vec3(triangle.triangle.vertices[0]),
-                transform.rotation.mul_vec3(triangle.triangle.vertices[1]),
-                transform.rotation.mul_vec3(triangle.triangle.vertices[2]),
-            );
-        }
+        // for triangle in &mut sphere_state.triangles {
+        //     triangle.triangle = Triangle3d::new(
+        //         transform.rotation.mul_vec3(triangle.triangle.vertices[0]),
+        //         transform.rotation.mul_vec3(triangle.triangle.vertices[1]),
+        //         transform.rotation.mul_vec3(triangle.triangle.vertices[2]),
+        //     );
+        // }
+        
     }
 }
 
