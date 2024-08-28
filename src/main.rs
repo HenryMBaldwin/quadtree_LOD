@@ -4,6 +4,8 @@ use std::f32::consts::TAU;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::{self, MouseButtonInput, MouseMotion, MouseWheel};
 use bevy::input::ButtonState;
+use bevy::log::tracing_subscriber::fmt::time;
+use bevy::math::NormedVectorSpace;
 use bevy::prelude::*;
 use bevy::render::camera;
 use bevy::render::mesh::{self, Indices, PrimitiveTopology, SphereKind, SphereMeshBuilder};
@@ -54,9 +56,19 @@ struct MouseState {
 
 #[derive(Resource)]
 struct CharacterState {
+    //true position on unit sphere
     center: Vec3,
-    current_triangle_id: usize,
+    //projected position onto nearest triangle
+    visual_center: Vec3,
+    //local forward vector
     forward: Vec3,
+    //local up vector
+    up: Vec3,
+    //right direction
+    right: Vec3,
+    //id of the closest triangle
+    current_triangle_id: usize,
+
 }
 
 //global state of sphere, so modification of the number of subdivisions can be done without losing the current state of the sphere
@@ -85,16 +97,20 @@ fn main() {
             transform: Transform::from_xyz(0.0, 0.0, 0.0),
             triangles: Vec::new(),
         })
-        .insert_resource(CharacterState { center: Vec3::ZERO, current_triangle_id: 0, forward: Vec3::X })
+        .insert_resource(CharacterState { 
+            center: Vec3::Z,
+            visual_center: Vec3::Z,
+            current_triangle_id: 0, 
+            forward: Vec3::Y,
+            right: Vec3::Y.cross(Vec3::Z),
+            up: Vec3::Z,})
         .add_systems(Startup, setup)
         .add_systems(Update, rotate_shape)
         .add_systems(Update, handle_ui_interactions)
         .add_systems(Update, handle_mouse_rotate)
         .add_systems(Update, handle_mouse_scroll)
         .add_systems(Update, track_sphere_state)
-        //.add_systems(Update, track_character_state)
-        //.add_systems(Update, handle_character_movement)
-        //.add_systems(Update, rotate_character)
+        .add_systems(Update, handle_character_movement)
         .run();
 }
 
@@ -117,25 +133,25 @@ fn setup(
     ));
  
     //character (cube for now)
-    // commands.spawn((
-    //     PbrBundle {
-    //         mesh: meshes.add(Cuboid::new(0.02, 0.02, 0.02)),
-    //         material: materials.add(StandardMaterial {
-    //             base_color: Color::srgb(0.0, 0.8, 0.2),
-    //             ..Default::default()
-    //         }),
-    //         transform: Transform::from_xyz(0.0, 0.0, 1.0),
-    //         ..Default::default()
-    //     },
-    //     Character,
-    // ));
+    commands.spawn((
+        PbrBundle {
+            mesh: meshes.add(Cuboid::new(0.02, 0.02, 0.02)),
+            material: materials.add(StandardMaterial {
+                base_color: Color::srgb(0.0, 0.8, 0.2),
+                ..Default::default()
+            }),
+            transform: Transform::from_xyz(0.0, 0.0, 1.0),
+            ..Default::default()
+        },
+        Character,
+    ));
 
     //light
     ambient_light.brightness = 1000.0;
 
     //spawn initial sphere
     //create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, sphere_state.clone(), subdivisions.value);
-    create_geodesic_sphere_tri(&mut commands, &mut meshes, &mut materials, sphere_state, subdivisions.value);
+    create_geodesic_sphere_tri(&mut commands, &mut meshes, &mut materials, sphere_state, asset_server.clone(), subdivisions.value);
 
     // UI setup
     commands.spawn(NodeBundle {
@@ -267,105 +283,32 @@ fn setup(
 
 
 fn handle_character_movement(
-    mut character_query: Query<(&Character, &mut Transform)>,
-    sphere_state: Res<SphereState>,
-    mut keybr_evr: EventReader<KeyboardInput>,
     mut character_state: ResMut<CharacterState>,
-    mouse_state: Res<MouseState>
+    mut character_query: Query<(&Character, &mut Transform)>,
+    time: Res<Time>,
 ) {
 
-    //if the mouse is currently dragging, don't do anything
-    if mouse_state.dragging {
-        return;
-    }
-    let center = character_state.center;
-    let triangles = &sphere_state.triangles;
-    let mut closest_triangle: Triangle = triangles[0].clone();
-    let mut closest_distance: f32 = 100000.0;
-    for triangle in triangles {
-        let center_point = triangle.triangle.centroid();
-        let distance = center.distance(center_point);
-        if distance < closest_distance {
-            closest_distance = distance;
-            closest_triangle = triangle.clone();
-        }
-    }
+    let dt = time.delta_seconds();
 
-    let closest_triangle_id = closest_triangle.index;
-
-    let normal = closest_triangle.triangle.normal().expect("Triangle does not have a normal");
-
-    // Orient the character to be perpendicular to the normal
+    let turn_rate = 0.0;
+    let speed = 0.1;
     for (_, mut transform) in &mut character_query {
-        if character_state.current_triangle_id != closest_triangle_id {
-            // Align the cube's up vector with the triangle's normal
-            transform.rotation = Quat::from_rotation_arc(Vec3::Y, normal.as_vec3());
-
-            // After aligning up, calculate the forward direction in the plane
-            let arbitrary_vector = character_state.forward;
-            let forward_in_plane = normal.cross(arbitrary_vector).normalize();
-
-            character_state.forward = forward_in_plane;
-
-            // Adjust rotation to ensure the forward direction is in the plane
-            let current_forward = transform.rotation * Vec3::Y;
-            let rotation_to_forward = Quat::from_rotation_arc(current_forward, forward_in_plane);
-            transform.rotation = rotation_to_forward * transform.rotation;
-
-            character_state.current_triangle_id = closest_triangle_id;
-        }
-    }
-
-    for (_, mut transform) in &mut character_query {
-        let character_position = transform.translation;
-        let to_character = character_position - closest_triangle.triangle.centroid();
-        let projection_on_plane = to_character - normal * to_character.dot(normal.as_vec3());
-        transform.translation = closest_triangle.triangle.centroid() + projection_on_plane;
-    }
-
-    // Listen for keyboard input
-    for event in keybr_evr.read() {
-        match event.key_code {
-            KeyCode::KeyW => {
-                for (_, mut transform) in &mut character_query {
-                    let local_forward = Vec3::Y;
-                    let world_forward = transform.rotation * local_forward;
-                    let forward_in_plane = world_forward - normal * world_forward.dot(normal.as_vec3());
-                    let forward_in_plane_normalized = forward_in_plane.normalize();
-                    let movement_speed = 0.01;
-                    transform.translation += forward_in_plane_normalized * movement_speed;
-                }
-            },
-            KeyCode::KeyS => {
-                for (_, mut transform) in &mut character_query {
-                    let local_forward = Vec3::Y;
-                    let world_forward = transform.rotation * local_forward;
-                    let forward_in_plane = world_forward - normal * world_forward.dot(normal.as_vec3());
-                    let forward_in_plane_normalized = forward_in_plane.normalize();
-                    let movement_speed = -0.01;
-                    transform.translation += forward_in_plane_normalized * movement_speed;
-                }
-            },
-            KeyCode::KeyA => {
-                for (_, mut transform) in &mut character_query {
-                    let rotation_angle = 10.0_f32.to_radians();
-                    let rotation = Quat::from_axis_angle(normal.as_vec3(), rotation_angle);
-                    transform.rotation = rotation * transform.rotation;
-                }
-            },
-            KeyCode::KeyD => {
-                for (_, mut transform) in &mut character_query {
-                    let rotation_angle = -10.0_f32.to_radians();
-                    let rotation = Quat::from_axis_angle(normal.as_vec3(), rotation_angle);
-                    transform.rotation = rotation * transform.rotation;
-                }
-            },
-            _ => {}
-        }
-    }
-
-    for (_, transform) in &mut character_query {
+        
+        // Update position
+        transform.translation =  (character_state.center + character_state.forward * speed * dt).normalize();
         character_state.center = transform.translation;
+
+        // Update forward direction
+        character_state.forward = (character_state.forward - transform.translation * speed * dt -   character_state.right * turn_rate * dt).normalize();
+
+        // Update right direction
+        character_state.right = (character_state.right + character_state.forward * turn_rate * dt).normalize();
+
+        //correct orthogonality and normalize vectors
+        character_state.forward = (character_state.forward - character_state.up.dot(character_state.forward) * character_state.up).normalize();
+        character_state.right = (character_state.right - character_state.up.dot(character_state.right) * character_state.up).normalize();
+        character_state.right = (character_state.right - character_state.forward.dot(character_state.right) * character_state.forward).normalize();
+        character_state.up = character_state.center.normalize();
     }
 }
 
@@ -381,7 +324,8 @@ fn handle_ui_interactions(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     sphere_query: Query<Entity, With<Sphere>>,
-    mut sphere_state: ResMut<SphereState>
+    mut sphere_state: ResMut<SphereState>,
+    asset_server: Res<AssetServer>,
 ) {
     let old_subdivisions = subdivisions.value;
     for (interaction, mut background_color, increment, decrement) in &mut interaction_query {
@@ -421,7 +365,7 @@ fn handle_ui_interactions(
     //if subdivisions have changed, create new sphere
     if subdivisions.value != old_subdivisions {
         //create_geodesic_sphere(&mut commands, &mut meshes, &mut materials, sphere_state, subdivisions.value);
-        create_geodesic_sphere_tri(&mut commands, &mut meshes, &mut materials, sphere_state, subdivisions.value);
+        create_geodesic_sphere_tri(&mut commands, &mut meshes, &mut materials, sphere_state, asset_server.clone(), subdivisions.value);
     }
 }
 
@@ -548,6 +492,7 @@ fn create_geodesic_sphere_tri(
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     mut sphere_state: ResMut<SphereState>,
+    asset_server: AssetServer,
     subdivisions: usize,
 ){
 
@@ -697,6 +642,15 @@ fn subdivide(triangles: Vec<Triangle>) -> (Vec<Vec3>, Vec<Triangle>) {
         }
 
     (new_vertices, new_triangles)
+}
+
+//dynamic texture generation
+fn generate_triangle_index_texture(triangles: Vec<Triangle>) -> Vec<u8> {
+    let mut texture: Vec<u8> = Vec::new();
+    for triangle in triangles {
+        texture.push(triangle.index as u8);
+    }
+    texture
 }
 
 
