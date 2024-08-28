@@ -294,15 +294,22 @@ fn handle_character_movement(
 ) {
 
     let mut speed = 0.0;
+    let mut turn_rate = 0.0;
 
     for event in keybr_evr.read() {
         match event.key_code {
             KeyCode::KeyW => {
-                speed = 0.5;
+                speed = 1.0;
             }
             KeyCode::KeyS => {
-                speed = -0.5;
-            }
+                speed = -1.0;
+            },
+            KeyCode::KeyA => {
+                turn_rate = -5.0;
+            },
+            KeyCode::KeyD => {
+                turn_rate = 5.0;
+            },
             _ => {}
         }
     }
@@ -310,8 +317,6 @@ fn handle_character_movement(
     
     //detect key presses
     let dt = time.delta_seconds();
-
-    let turn_rate = 0.0;
     
     for (_, mut transform) in &mut character_query {
 
@@ -351,6 +356,10 @@ fn handle_character_movement(
         character_state.right = (character_state.right - character_state.forward.dot(character_state.right) * character_state.forward).normalize();
         character_state.up = character_state.center.normalize();
 
+        //calculate models rotation
+        let rotation = Quat::from_mat3(&Mat3::from_cols(character_state.right, character_state.up, character_state.forward));
+        transform.rotation = rotation;
+        
         
     }
 }
