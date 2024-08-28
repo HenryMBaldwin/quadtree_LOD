@@ -11,6 +11,7 @@ use bevy::render::camera;
 use bevy::render::mesh::{self, Indices, PrimitiveTopology, SphereKind, SphereMeshBuilder};
 use bevy::pbr::wireframe::{Wireframe, WireframePlugin};
 use bevy::render::render_asset::RenderAssetUsages;
+use rand::Rng;
 
 const PHI: f32 = 1.61803398875;
 
@@ -675,15 +676,26 @@ fn create_geodesic_sphere_tri(
         let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
         let mut positions: Vec<Vec3> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
+        let mut colors: Vec<[f32; 4]> = Vec::new();
+
         for triangle in triangles.clone() {
-            positions.push(triangle.triangle.vertices[0]);
-            positions.push(triangle.triangle.vertices[1]);
-            positions.push(triangle.triangle.vertices[2]);
+            let color = get_color(&triangle);
+
+            for &vertex in &triangle.triangle.vertices {
+                positions.push(vertex);
+                colors.push(color);
+            }
+
+            // positions.push(triangle.triangle.vertices[0]);
+            // positions.push(triangle.triangle.vertices[1]);
+            // positions.push(triangle.triangle.vertices[2]);
+
             indices.push(indices.len() as u32);
             indices.push(indices.len() as u32);
             indices.push(indices.len() as u32);
         }
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
         mesh.insert_indices(Indices::U32(indices));
         commands.spawn((
             PbrBundle {
@@ -700,15 +712,7 @@ fn create_geodesic_sphere_tri(
         ));
     }
 
-    //add transform to triangles
-    for triangle in &mut triangles {
-        triangle.triangle = Triangle3d::new(
-            sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[0]),
-            sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[1]),
-            sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[2]),
-        );
-    }
-    //add triangles to sphere state
+
     sphere_state.triangles = triangles;
 }
 
@@ -761,3 +765,13 @@ fn rotate_shape(mut shapes: Query<(&mut Transform, &Rotateable)>, timer: Res<Tim
     }
 }
 
+//dummy function to get color
+fn get_color(triangle: &Triangle) -> [f32; 4] {
+    let mut rng = rand::thread_rng();
+    [
+        rng.gen::<f32>(), // Red
+        rng.gen::<f32>(), // Green
+        rng.gen::<f32>(), // Blue
+        1.0,              // Alpha (fully opaque)
+    ]
+}
