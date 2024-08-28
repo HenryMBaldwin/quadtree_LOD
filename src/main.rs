@@ -66,6 +66,8 @@ struct CharacterState {
     up: Vec3,
     //right direction
     right: Vec3,
+    //sphere transform
+    sphere_transform: Transform,
     //id of the closest triangle
     current_triangle_id: usize,
 
@@ -103,6 +105,7 @@ fn main() {
             current_triangle_id: 0, 
             forward: Vec3::Y,
             right: Vec3::Y.cross(Vec3::Z),
+            sphere_transform: Transform::from_xyz(0.0, 0.0, 0.0),
             up: Vec3::Z,})
         .add_systems(Startup, setup)
         .add_systems(Update, rotate_shape)
@@ -287,18 +290,33 @@ fn handle_character_movement(
     mut character_query: Query<(&Character, &mut Transform)>,
     sphere_state: Res<SphereState>,
     time: Res<Time>,
+    mut keybr_evr: EventReader<KeyboardInput>,
 ) {
 
+    let mut speed = 0.0;
+
+    for event in keybr_evr.read() {
+        match event.key_code {
+            KeyCode::KeyW => {
+                speed = 0.5;
+            }
+            KeyCode::KeyS => {
+                speed = -0.5;
+            }
+            _ => {}
+        }
+    }
+
     
-    
+    //detect key presses
     let dt = time.delta_seconds();
 
     let turn_rate = 0.0;
-    let speed = 0.1;
+    
     for (_, mut transform) in &mut character_query {
-        
-        //apply sphere transform to character
-        transform.translation = sphere_state.transform.rotation.mul_vec3(character_state.center);
+
+        let delta_rotation = sphere_state.transform.rotation * character_state.sphere_transform.rotation.inverse();
+        transform.translation = delta_rotation.mul_vec3(character_state.center);
         character_state.center = transform.translation;
 
         //recalc up
@@ -307,8 +325,9 @@ fn handle_character_movement(
         //apply sphere transform to forward and right
         character_state.forward = sphere_state.transform.rotation.mul_vec3(character_state.forward);
         character_state.right = sphere_state.transform.rotation.mul_vec3(character_state.right);
-
-        // Update position
+        character_state.sphere_transform = sphere_state.transform;
+        
+        // Update position based on input
         transform.translation =  (character_state.center + character_state.forward * speed * dt).normalize();
         character_state.center = transform.translation;
 
@@ -323,6 +342,8 @@ fn handle_character_movement(
         character_state.right = (character_state.right - character_state.up.dot(character_state.right) * character_state.up).normalize();
         character_state.right = (character_state.right - character_state.forward.dot(character_state.right) * character_state.forward).normalize();
         character_state.up = character_state.center.normalize();
+
+        
     }
 }
 
