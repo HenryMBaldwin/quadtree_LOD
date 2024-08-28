@@ -56,6 +56,7 @@ struct MouseState {
 struct CharacterState {
     center: Vec3,
     current_triangle_id: usize,
+    forward: Vec3,
 }
 
 //global state of sphere, so modification of the number of subdivisions can be done without losing the current state of the sphere
@@ -84,15 +85,15 @@ fn main() {
             transform: Transform::from_xyz(0.0, 0.0, 0.0),
             triangles: Vec::new(),
         })
-        .insert_resource(CharacterState { center: Vec3::ZERO, current_triangle_id: 0 })
+        .insert_resource(CharacterState { center: Vec3::ZERO, current_triangle_id: 0, forward: Vec3::X })
         .add_systems(Startup, setup)
         .add_systems(Update, rotate_shape)
         .add_systems(Update, handle_ui_interactions)
         .add_systems(Update, handle_mouse_rotate)
         .add_systems(Update, handle_mouse_scroll)
         .add_systems(Update, track_sphere_state)
-        .add_systems(Update, track_character_state)
-        .add_systems(Update, handle_character_movement)
+        //.add_systems(Update, track_character_state)
+        //.add_systems(Update, handle_character_movement)
         //.add_systems(Update, rotate_character)
         .run();
 }
@@ -116,18 +117,18 @@ fn setup(
     ));
  
     //character (cube for now)
-    commands.spawn((
-        PbrBundle {
-            mesh: meshes.add(Cuboid::new(0.02, 0.02, 0.02)),
-            material: materials.add(StandardMaterial {
-                base_color: Color::srgb(0.0, 0.8, 0.2),
-                ..Default::default()
-            }),
-            transform: Transform::from_xyz(0.0, 0.0, 1.0),
-            ..Default::default()
-        },
-        Character,
-    ));
+    // commands.spawn((
+    //     PbrBundle {
+    //         mesh: meshes.add(Cuboid::new(0.02, 0.02, 0.02)),
+    //         material: materials.add(StandardMaterial {
+    //             base_color: Color::srgb(0.0, 0.8, 0.2),
+    //             ..Default::default()
+    //         }),
+    //         transform: Transform::from_xyz(0.0, 0.0, 1.0),
+    //         ..Default::default()
+    //     },
+    //     Character,
+    // ));
 
     //light
     ambient_light.brightness = 1000.0;
@@ -270,7 +271,13 @@ fn handle_character_movement(
     sphere_state: Res<SphereState>,
     mut keybr_evr: EventReader<KeyboardInput>,
     mut character_state: ResMut<CharacterState>,
+    mouse_state: Res<MouseState>
 ) {
+
+    //if the mouse is currently dragging, don't do anything
+    if mouse_state.dragging {
+        return;
+    }
     let center = character_state.center;
     let triangles = &sphere_state.triangles;
     let mut closest_triangle: Triangle = triangles[0].clone();
@@ -285,19 +292,22 @@ fn handle_character_movement(
     }
 
     let closest_triangle_id = closest_triangle.index;
+
     let normal = closest_triangle.triangle.normal().expect("Triangle does not have a normal");
 
     // Orient the character to be perpendicular to the normal
     for (_, mut transform) in &mut character_query {
         if character_state.current_triangle_id != closest_triangle_id {
+            // Align the cube's up vector with the triangle's normal
             transform.rotation = Quat::from_rotation_arc(Vec3::Y, normal.as_vec3());
 
-            // Recalculate the forward direction to be in the plane of the triangle
-            // Use the cross product with a known vector not parallel to the normal
-            let arbitrary_vector = Vec3::X;
+            // After aligning up, calculate the forward direction in the plane
+            let arbitrary_vector = character_state.forward;
             let forward_in_plane = normal.cross(arbitrary_vector).normalize();
 
-            // Rotate the character to face this new forward direction
+            character_state.forward = forward_in_plane;
+
+            // Adjust rotation to ensure the forward direction is in the plane
             let current_forward = transform.rotation * Vec3::Y;
             let rotation_to_forward = Quat::from_rotation_arc(current_forward, forward_in_plane);
             transform.rotation = rotation_to_forward * transform.rotation;
@@ -358,6 +368,7 @@ fn handle_character_movement(
         character_state.center = transform.translation;
     }
 }
+
 
 fn handle_ui_interactions(
     mut interaction_query: Query<
@@ -476,13 +487,13 @@ fn handle_mouse_rotate(
     //track transform of sphere
     for (transform, _) in &mut sphere_transform_query {
         sphere_state.transform = *transform;
-        // for triangle in &mut sphere_state.triangles {
-        //     triangle.triangle = Triangle3d::new(
-        //         transform.rotation.mul_vec3(triangle.triangle.vertices[0]),
-        //         transform.rotation.mul_vec3(triangle.triangle.vertices[1]),
-        //         transform.rotation.mul_vec3(triangle.triangle.vertices[2]),
-        //     );
-        // }
+        for triangle in &mut sphere_state.triangles {
+            triangle.triangle = Triangle3d::new(
+                transform.rotation.mul_vec3(triangle.triangle.vertices[0]),
+                transform.rotation.mul_vec3(triangle.triangle.vertices[1]),
+                transform.rotation.mul_vec3(triangle.triangle.vertices[2]),
+            );
+        }
         
     }
 }
@@ -643,6 +654,14 @@ fn create_geodesic_sphere_tri(
         ));
     }
 
+    //add transform to triangles
+    for triangle in &mut triangles {
+        triangle.triangle = Triangle3d::new(
+            sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[0]),
+            sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[1]),
+            sphere_state.transform.rotation.mul_vec3(triangle.triangle.vertices[2]),
+        );
+    }
     //add triangles to sphere state
     sphere_state.triangles = triangles;
 }
