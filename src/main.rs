@@ -322,9 +322,17 @@ fn handle_character_movement(
         //recalc up
         character_state.up = character_state.center.normalize();
 
+        // Recalculate the forward vector to ensure it's correctly aligned with the surface
+        //recalc forward
+        character_state.forward = (delta_rotation.mul_vec3(character_state.forward)).normalize();
+        character_state.forward = (character_state.forward - character_state.up.dot(character_state.forward) * character_state.up).normalize();
+
+        //recalc right
+        character_state.right = character_state.up.cross(character_state.forward).normalize();
+
         //apply sphere transform to forward and right
-        character_state.forward = sphere_state.transform.rotation.mul_vec3(character_state.forward);
-        character_state.right = sphere_state.transform.rotation.mul_vec3(character_state.right);
+        // character_state.forward = sphere_state.transform.rotation.mul_vec3(character_state.forward);
+        // character_state.right = sphere_state.transform.rotation.mul_vec3(character_state.right);
         character_state.sphere_transform = sphere_state.transform;
         
         // Update position based on input
