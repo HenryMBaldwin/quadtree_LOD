@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::f32::consts::TAU;
 
 
@@ -5,7 +6,7 @@ use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::{self, MouseButtonInput, MouseMotion, MouseWheel};
 use bevy::input::ButtonState;
 use bevy::log::tracing_subscriber::fmt::time;
-use bevy::math::NormedVectorSpace;
+use bevy::math::{vec3, NormedVectorSpace};
 use bevy::prelude::*;
 use bevy::render::camera;
 use bevy::render::mesh::{self, Indices, PrimitiveTopology, SphereKind, SphereMeshBuilder};
@@ -71,6 +72,8 @@ struct CharacterState {
     sphere_transform: Transform,
     //id of the closest triangle
     current_triangle_id: usize,
+    //current triangle
+    current_traingle: Triangle,
 
 }
 
@@ -107,6 +110,7 @@ fn main() {
             center: Vec3::Z,
             visual_transform: Transform::from_xyz(0.0, 0.0, 0.0),
             current_triangle_id: 0, 
+            current_traingle: Triangle {index: 0, triangle: Triangle3d::new(Vec3::new(0.0,0.0,0.0), Vec3::new(0.0,0.0,0.0), Vec3::new(0.0,0.0,0.0))},
             forward: Vec3::Y,
             right: Vec3::Y.cross(Vec3::Z),
             sphere_transform: Transform::from_xyz(0.0, 0.0, 0.0),
@@ -304,6 +308,7 @@ fn handle_character_movement(
 
     //get closest triangle
     let mut closest_distance = f32::INFINITY;
+    let mut closest_triangle: Option<Triangle> = None;
     for triangle in triangles {
         //apply sphere transform to triangle
         let triangle_rot = Triangle3d::new(
@@ -318,11 +323,17 @@ fn handle_character_movement(
         if distance < closest_distance {
             closest_distance = distance;
             closest_triangle_id = triangle.index;
+            closest_triangle = Some(triangle)
         }
     }
 
     character_state.current_triangle_id = closest_triangle_id;
-
+    match closest_triangle {
+        Some(triangle) => {
+            character_state.current_traingle = triangle
+        },
+        None => {}
+    }
     let mut speed = 0.0;
     let mut turn_rate = 0.0;
 
@@ -710,7 +721,10 @@ fn create_geodesic_sphere_tri(
         let mut colors: Vec<[f32; 4]> = Vec::new();
 
         for triangle in triangles.clone() {
-            let color = get_color(&triangle, character_state.current_triangle_id);
+
+            //get distance
+            let distance = get_triangle_distance(character_state.current_traingle.clone(), triangle.clone(), triangles.clone());
+            let color = get_color(distance);
 
             for &vertex in &triangle.triangle.vertices {
                 positions.push(vertex);
@@ -754,7 +768,7 @@ fn create_geodesic_sphere_tri(
 fn subdivide(triangles: Vec<Triangle>) -> (Vec<Vec3>, Vec<Triangle>) {
     let mut new_vertices: Vec<Vec3> = Vec::new();
     let mut new_triangles: Vec<Triangle> = Vec::new();
-    
+        let mut index = 1; 
         for triangle in triangles {
 
             //get vertices of triangle
@@ -774,7 +788,7 @@ fn subdivide(triangles: Vec<Triangle>) -> (Vec<Vec3>, Vec<Triangle>) {
             new_vertices.push(bc);
             new_vertices.push(ca);
             
-            let mut index = 1;
+            
             new_triangles.push(Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(a, ab, ca)});
             new_triangles.push(Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(b, bc, ab)});
             new_triangles.push(Triangle {index: {index += 1; index.clone()}, triangle: Triangle3d::new(c, ca, bc)});
@@ -810,7 +824,11 @@ fn update_colors(
         let mut colors: Vec<[f32; 4]> = Vec::new();
 
         for triangle in &sphere_state.triangles {
-            let color = get_color(triangle, closest_id);
+
+            
+            //get distance to current_triangle
+            let distance = get_triangle_distance(character_state.current_traingle.clone(), triangle.clone(), sphere_state.triangles.clone());
+            let color = get_color( distance);
 
             for _ in 0..3 {
                 colors.push(color);
@@ -821,17 +839,89 @@ fn update_colors(
     }
 }
 //dummy function to get color
-fn get_color(triangle: &Triangle, closest_triangle_id: usize) -> [f32; 4] {
+fn get_color( distance: i32) -> [f32; 4] {
 
-    //make triangle pure red of its the closest triangle
-    if triangle.index == closest_triangle_id {
-        return [1.0, 0.0, 0.0, 1.0];
+    match distance {
+       0 => {
+        [
+            1.0,
+            0.0,
+            0.0,
+            1.0,
+        ]
+       },
+       1 => {
+        [
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+        ]
+       },
+       _ => {
+        [
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+        ]
+       }
+
     }
-    let mut rng = rand::thread_rng();
-    [   
-        0.0, // Red
-        rng.gen::<f32>(), // Green
-        rng.gen::<f32>(), // Blue
-        1.0,              // Alpha (fully opaque)
-    ]
+}
+
+// gets distance with bfs
+fn get_triangle_distance(triangle_1: Triangle, triangle_2: Triangle, triangles: Vec<Triangle>) -> i32 {
+
+    //sanity check that triangle_1 and triangle_2 are different
+    if triangle_1.index == triangle_2.index {
+        return 0;
+    }
+
+    // let mut current = ;
+    let target_triangle_id = triangle_2.index;
+
+    let mut visited: Vec<usize> = Vec::new();
+    
+    let mut queue: VecDeque<(Triangle, i32)> = VecDeque::new();
+    
+    let mut visited_indices: Vec<usize> = Vec::new();
+
+    queue.push_back((triangle_1, 0));
+     
+    while !queue.is_empty() {
+        //pop off front of queue
+        match queue.pop_front() {
+            Some((current, mut depth)) => {
+                //increase depth by 1
+                depth += 1; 
+                for triangle in triangles.iter() {
+                    //make sure triangle hasn't been visited
+                    if !visited_indices.contains(&triangle.index){
+                        //check if this triangle shares a vertex with current
+                        'outer: for vert_1 in current.triangle.vertices {
+                            for vert_2 in triangle.triangle.vertices {
+                                if vert_1 == vert_2 {
+                                    //check if this triangle is the correct triangle
+                                    if triangle.index == target_triangle_id {
+                                        return depth;
+                                    }
+                                    //otherwise add triangle to visited
+                                    else {
+                                        visited.push(triangle.index);
+                                        queue.push_back((triangle.clone(), depth));
+                                        //break outer loop
+                                        break 'outer;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            None => {return -1;}
+        }
+    }
+
+    return -1;
 }
